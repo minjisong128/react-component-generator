@@ -515,6 +515,7 @@ body {
   padding: 0.4rem 0.5rem;
   border-bottom: 1px solid var(--win7-button-shadow);
   margin-bottom: 0.5rem;
+  gap: 1rem;
 }
 
 .panel-header h3 {
@@ -524,6 +525,41 @@ body {
   margin: 0;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.viewport-selector {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.viewport-btn {
+  padding: 0.25rem 0.5rem;
+  background: linear-gradient(to bottom, #f0f0f0, #c0c0c0);
+  border: 2px solid;
+  border-color: var(--win7-button-highlight) var(--win7-button-shadow);
+  color: var(--win7-dark-gray);
+  cursor: pointer;
+  font-size: 0.65rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: all 0.1s;
+  min-width: 55px;
+}
+
+.viewport-btn:hover {
+  background: linear-gradient(to bottom, #ffffff, #d0d0d0);
+}
+
+.viewport-btn:active {
+  border-color: var(--win7-button-shadow) var(--win7-button-highlight);
+  background: linear-gradient(to bottom, #c0c0c0, #f0f0f0);
+}
+
+.viewport-btn--active {
+  background: linear-gradient(to bottom, #0071c5, #0052a3);
+  color: var(--win7-white);
+  border-color: var(--win7-button-highlight) var(--win7-button-shadow);
+  font-weight: 600;
 }
 
 /* Preview */

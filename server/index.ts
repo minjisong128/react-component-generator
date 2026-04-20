@@ -1,3 +1,5 @@
+import { resolveApiKey, stripCodeFences, ensureRenderCall } from './utils/index.ts';
+
 const SYSTEM_PROMPT = `You are a React component generator. Generate a single React component based on the user's description.
 
 Rules:
@@ -42,22 +44,13 @@ const GradientButton = () => {
 
 render(<GradientButton />);`;
 
-const CORS_HEADERS = {
+export const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
-type Provider = 'anthropic' | 'google';
-
-const ENV_KEYS: Record<Provider, string | undefined> = {
-  anthropic: process.env.ANTHROPIC_API_KEY,
-  google: process.env.GOOGLE_API_KEY,
-};
-
-function resolveApiKey(provider: Provider, clientKey?: string): string | null {
-  return clientKey || ENV_KEYS[provider] || null;
-}
+export type Provider = 'anthropic' | 'google';
 
 async function callAnthropic(prompt: string, apiKey: string): Promise<string> {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -85,7 +78,7 @@ async function callAnthropic(prompt: string, apiKey: string): Promise<string> {
 
   return data.content
     .filter((block) => block.type === 'text')
-    .map((block) => block.text)
+    .map((block) => block.text ?? '')
     .join('');
 }
 
@@ -126,105 +119,108 @@ async function callGoogle(prompt: string, apiKey: string): Promise<string> {
   );
 }
 
-function stripCodeFences(text: string): string {
-  return text
-    .replace(/^```(?:jsx|tsx|javascript|typescript)?\n?/gm, '')
-    .replace(/```$/gm, '')
-    .trim();
-}
 
-function ensureRenderCall(code: string): string {
-  if (/\brender\s*\(/.test(code)) return code;
-
-  const match = code.match(/(?:const|function)\s+([A-Z]\w+)/);
-  if (match) {
-    return `${code}\n\nrender(<${match[1]} />);`;
+export async function handleRequest(req: Request): Promise<Response> {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: CORS_HEADERS });
   }
-  return code;
-}
 
-const server = Bun.serve({
-  port: 3002,
-  async fetch(req) {
-    if (req.method === 'OPTIONS') {
-      return new Response(null, { headers: CORS_HEADERS });
-    }
+  const url = new URL(req.url);
 
-    const url = new URL(req.url);
-
-    if (req.method === 'GET' && url.pathname === '/api/config') {
-      return Response.json(
-        {
-          envKeys: {
-            anthropic: !!ENV_KEYS.anthropic,
-            google: !!ENV_KEYS.google,
-          },
+  if (req.method === 'GET' && url.pathname === '/api/config') {
+    return Response.json(
+      {
+        envKeys: {
+          anthropic: !!process.env.ANTHROPIC_API_KEY,
+          google: !!process.env.GOOGLE_API_KEY,
         },
-        { headers: CORS_HEADERS }
-      );
-    }
+      },
+      { headers: CORS_HEADERS }
+    );
+  }
 
-    if (req.method === 'POST' && url.pathname === '/api/generate') {
-      try {
-        const { prompt, apiKey, provider = 'anthropic' } = (await req.json()) as {
-          prompt: string;
-          apiKey?: string;
-          provider?: Provider;
-        };
+  if (req.method === 'POST' && url.pathname === '/api/generate') {
+    try {
+      const { prompt, apiKey, provider = 'anthropic' } = (await req.json()) as {
+        prompt: string;
+        apiKey?: string;
+        provider?: Provider;
+      };
 
-        const resolvedKey = resolveApiKey(provider, apiKey);
-
-        if (!resolvedKey) {
-          return Response.json(
-            { error: `API key is required. Set ${provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'GOOGLE_API_KEY'} in .env or enter it manually.` },
-            { status: 400, headers: CORS_HEADERS }
-          );
-        }
-
-        if (!prompt) {
-          return Response.json(
-            { error: 'Prompt is required' },
-            { status: 400, headers: CORS_HEADERS }
-          );
-        }
-
-        const text =
-          provider === 'google'
-            ? await callGoogle(prompt, resolvedKey)
-            : await callAnthropic(prompt, resolvedKey);
-
-        const code = ensureRenderCall(stripCodeFences(text));
-
-        return Response.json({ code }, { headers: CORS_HEADERS });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unknown error';
-
-        if (message.includes('503')) {
-          return Response.json(
-            { error: 'API 서버가 일시적으로 과부하 상태입니다. 잠시 후 다시 시도해주세요.' },
-            { status: 503, headers: CORS_HEADERS }
-          );
-        }
-
-        if (message.includes('429')) {
-          return Response.json(
-            { error: '요청이 너무 많습니다. 잠시 후 다시 시도해주세요.' },
-            { status: 429, headers: CORS_HEADERS }
-          );
-        }
-
+      if (!prompt || !prompt.trim()) {
         return Response.json(
-          { error: message },
-          { status: 500, headers: CORS_HEADERS }
+          { error: 'Prompt is required' },
+          { status: 400, headers: CORS_HEADERS }
         );
       }
+
+      const validProviders: Provider[] = ['anthropic', 'google'];
+      if (!validProviders.includes(provider)) {
+        return Response.json(
+          { error: `유효하지 않은 provider입니다. 허용된 값: ${validProviders.join(', ')}` },
+          { status: 400, headers: CORS_HEADERS }
+        );
+      }
+
+      const resolvedKey = resolveApiKey(provider, apiKey);
+
+      if (!resolvedKey) {
+        return Response.json(
+          { error: `API key is required. Set ${provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'GOOGLE_API_KEY'} in .env or enter it manually.` },
+          { status: 400, headers: CORS_HEADERS }
+        );
+      }
+
+      const text =
+        provider === 'google'
+          ? await callGoogle(prompt, resolvedKey)
+          : await callAnthropic(prompt, resolvedKey);
+
+      const code = ensureRenderCall(stripCodeFences(text));
+
+      return Response.json({ code }, { headers: CORS_HEADERS });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+
+      if (message.includes('401')) {
+        return Response.json(
+          { error: '유효하지 않은 API 키입니다. API 키를 확인하고 다시 시도해주세요.' },
+          { status: 400, headers: CORS_HEADERS }
+        );
+      }
+
+      if (message.includes('429')) {
+        return Response.json(
+          { error: '요청이 너무 많습니다. 잠시 후 다시 시도해주세요.' },
+          { status: 429, headers: CORS_HEADERS }
+        );
+      }
+
+      if (message.includes('503')) {
+        return Response.json(
+          { error: 'API 서버가 일시적으로 과부하 상태입니다. 잠시 후 다시 시도해주세요.' },
+          { status: 503, headers: CORS_HEADERS }
+        );
+      }
+
+      return Response.json(
+        { error: message },
+        { status: 500, headers: CORS_HEADERS }
+      );
     }
+  }
 
-    return Response.json(
-      { error: 'Not found' },
-      { status: 404, headers: CORS_HEADERS }
-    );
-  },
-});
+  return Response.json(
+    { error: 'Not found' },
+    { status: 404, headers: CORS_HEADERS }
+  );
+}
 
-console.log(`API server running at http://localhost:${server.port}`);
+if (import.meta.main) {
+  const server = Bun.serve({
+    port: 3002,
+    fetch: handleRequest,
+  });
+
+  console.log(`API server running at http://localhost:${server.port}`);
+}
